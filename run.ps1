@@ -1,13 +1,14 @@
+# HashTable and RunSpace for GUI
 $syncHash = [hashtable]::Synchronized(@{})
-$newRunspace =[runspacefactory]::CreateRunspace()
+$newRunspace = [runspacefactory]::CreateRunspace()
 $newRunspace.ApartmentState = "STA"
 $newRunspace.ThreadOptions = "ReuseThread"         
 $newRunspace.Open()
-$newRunspace.SessionStateProxy.SetVariable("syncHash",$syncHash)
+$newRunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)      
 
-
-#Sample for this question on SO https://stackoverflow.com/questions/52405852/link-wpf-xaml-to-datagrid-in-powershell?sem=2
-$inputXML = @"
+# Build UI and add to RunSpace
+$psCmd = [PowerShell]::Create().AddScript( {
+        $inputXML = @"
 <Window x:Class="WpfApp2.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -25,14 +26,12 @@ $inputXML = @"
         </Grid.RowDefinitions>
         <CheckBox Name="MRACheckBox" Content="Remoteapp mode" HorizontalAlignment="Left" Margin="12,40,0,0" VerticalAlignment="Top" Height="31" Width="150"/>
         <Button Name="StartButton" Content="Start" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top" Width="75" Height="20"/>
-        <ProgressBar Name="ProgressBar" HorizontalAlignment="Left" Height="10" Margin="100,15,0,0" VerticalAlignment="Top" Width="252"/>
+        <ProgressBar Name="ProgressBar" HorizontalAlignment="Left" Height="10" Margin="100,15,0,0" VerticalAlignment="Top" Width="295"/>
         <Label Content="Status:" HorizontalAlignment="Left" Margin="10,190,0,-52.5" VerticalAlignment="Top" Width="46" Height="26" FontWeight="Bold"/>
         <Label Content="User VMs" HorizontalAlignment="Left" Margin="10,64,0,0" VerticalAlignment="Top" FontWeight="Bold"/>
         <TextBlock Name="StatusTextBlock" HorizontalAlignment="Left" Margin="61,195,0,-57.5" TextWrapping="Wrap" Text="loading..." VerticalAlignment="Top" Width="270" Height="26"/>
         <DataGrid Name="DataGrid" Height="90" HorizontalAlignment="Left" Margin="12,95,0,0" Width="380" HorizontalGridLinesBrush="Gray" VerticalGridLinesBrush="Gray" VerticalAlignment="Top">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="100" IsReadOnly="True"/>
-                <DataGridTextColumn Header="IP" Binding="{Binding IP}" Width="100" IsReadOnly="True"/>
                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="Auto" IsReadOnly="True">
                 <DataGridTextColumn.ElementStyle>
                 <Style TargetType="{x:Type TextBlock}">
@@ -47,96 +46,199 @@ $inputXML = @"
                 </Style>
                 </DataGridTextColumn.ElementStyle>
                 </DataGridTextColumn>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="Auto" IsReadOnly="True"/>
+                <DataGridTextColumn Header="IP" Binding="{Binding IP}" Width="Auto" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="Auto" IsReadOnly="True"/>
                 <DataGridTextColumn Header="Expiration" Binding="{Binding Expiration}" Width="1*" IsReadOnly="True"/>
             </DataGrid.Columns>
         </DataGrid>
     </Grid>
 </Window>
-"@ 
-  
-$inputXML = $inputXML -replace 'mc:Ignorable="d"', '' -replace "x:N", 'N' -replace '^<Win.*', '<Window'
-[void][System.Reflection.Assembly]::LoadWithPartialName('presentationframework')
-[xml]$XAML = $inputXML
+"@
 
-#Read XAML 
-$reader = (New-Object System.Xml.XmlNodeReader $xaml) 
+        $inputXML = $inputXML -replace 'mc:Ignorable="d"', '' -replace "x:N", 'N' -replace '^<Win.*', '<Window'
+        [void][System.Reflection.Assembly]::LoadWithPartialName('presentationframework')
+
+        [xml]$xaml = $inputXML
+
+        #Read XAML 
+        $reader = (New-Object System.Xml.XmlNodeReader $xaml) 
+        $syncHash.Form = [Windows.Markup.XamlReader]::Load( $reader )
+
+        # Store Form Objects In PowerShell
+        $xaml.SelectNodes("//*[@Name]") | ForEach-Object { $syncHash."WPF$($_.Name)" = $syncHash.Form.FindName($_.Name) }
+
+        function Write-FormHost {
+            param( [string]$Text )
+
+            $syncHash.Form.Dispatcher.Invoke(
+                [action] { $syncHash.WPFStatusTextBlock.Text = $Text }, "Render"
+            )
+            Start-Sleep -Milliseconds 500
+        }
+
+        function Write-FormHostError {
+            param( [string]$Text )
+
+            $syncHash.Form.Dispatcher.Invoke([action] { 
+                $syncHash.WPFStatusTextBlock.Text = $Text 
+                $syncHash.WPFStatusTextBlock.Foreground = 'red'
+                }, "Render"
+            )
+            Start-Sleep -Milliseconds 500
+        }
+
+
+        function Get-Settings {
+            Write-FormHost "settings loaded"
+            if ($env:SDD_REMOTEAPP -eq $true) {
+                $syncHash.WPFMRACheckBox.IsChecked = $true
+            }
+            else {
+                $syncHash.WPFMRACheckBox.IsChecked = $false   
+            }
+        }
+
+        # function Get-Status {
+        #     Write-FormHost "portal login"
+        #     Start-Sleep 10
+        #     $syncHash.WPFProgressBar.Value = 20
+        #     Write-FormHost "fetching user VMs"
+        #     Start-Sleep 10
+        #     $syncHash.WPFProgressBar.Value = 40
+        #     Write-FormHost "converting forms"
+        #     Start-Sleep -Milliseconds 500
+        #     $syncHash.WPFProgressBar.Value = 60
+        #     Write-FormHost "calculating best VM"
+        #     $syncHash.WPFProgressBar.Value = 100
+        #     $syncHash.WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name1'; IP = '10.2.1.1'; State = 'OK'; Expiration = '14 days' })
+        #     $syncHash.WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name2'; IP = '10.2.1.2'; State = 'NOK'; Expiration = '5 days' })
+        #     $syncHash.WPFStartButton.IsEnabled = $true
+        # }
+
+        $syncHash.WPFMRACheckBox.Add_Click( { 
+       
+                $saverunspace = [runspacefactory]::CreateRunspace()
+                $saverunspace.ApartmentState = "STA"
+                $saverunspace.ThreadOptions = "ReuseThread"
+                $saverunspace.Open()
+                $saverunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)
+        
+                $syncHash.mode = $syncHash.WPFMRACheckBox.IsChecked
+
+                $code = {
+                    [System.Environment]::SetEnvironmentVariable('SDD_REMOTEAPP', $syncHash.mode , [System.EnvironmentVariableTarget]::User)
+            
+                    $syncHash.Form.Dispatcher.Invoke(
+                        [action] { $syncHash.WPFStatusTextBlock.Text = "mode:$($syncHash.WPFMRACheckBox.IsChecked):state:$($syncHash.mode)" }, "Render"
+                    )       
+                }
+
+                $PSInstance = [powershell]::Create().AddScript($code)
+                $PSinstance.Runspace = $saverunspace
+                $job = $PSinstance.BeginInvoke()
+            });
+
+        $syncHash.WPFStartButton.Add_Click( { 
+        
+                $syncHash.WPFStartButton.IsEnabled = $False
+
+                $btnrunspace = [runspacefactory]::CreateRunspace()
+                $btnrunspace.ApartmentState = "STA"
+                $btnrunspace.ThreadOptions = "ReuseThread"
+                $btnrunspace.Open()
+                $btnrunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)
+
+                $syncHash.mode = $syncHash.WPFMRACheckBox.IsChecked
+              
+                $code = {
+                    function Write-FormStatus ($msg, $indicator) {
+                        $syncHash.Form.Dispatcher.Invoke(
+                            [action] {
+                                $syncHash.WPFStatusTextBlock.Text = $msg 
+                                $syncHash.WPFProgressBar.Value = $indicator
+                            }, "Render"
+                        )
+                    }
+                    function StartButtonEnable {
+                        $syncHash.Form.Dispatcher.Invoke(
+                            [action] { $syncHash.WPFStartButton.IsEnabled = $true })
+                    }
+      
+                    function LoadProgress ($msg = "loading"){
+                        For ($i = 0; $i -le 10; $i++) {
+                            Write-FormStatus "$($msg) ." $i
+                            Start-Sleep -Milliseconds 200
+                            Write-FormStatus "$($msg) .."
+                            Start-Sleep -Milliseconds 200
+                            Write-FormStatus "$($msg) ..."
+                            Start-Sleep -Milliseconds 200
+                        }
+                    }
+
+                    function LoadGrid {
+
+                        $syncHash.Form.Dispatcher.Invoke([action] { 
+                                
+                            $syncHash.WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name1'; IP = '10.2.1.1'; State = 'OK'; Expiration = '14 days' })
+                            $syncHash.WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name1'; IP = '10.2.1.1'; State = 'OK'; Expiration = '14 days' })
+
+                            }, "Render"
+                        )
+                    }
+
+                    function FetchData {
+
+                        if (-not $syncHash.dataFetching){
+                            
+                            $syncHash.dataFetching = $true
+                            
+                            $datarunspace = [runspacefactory]::CreateRunspace()
+                            $datarunspace.ApartmentState = "STA"
+                            $datarunspace.ThreadOptions = "ReuseThread"
+                            $datarunspace.Open()
+                            $datarunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)
+                            
+                            $code = {
+                                Start-Sleep 10
+                                $syncHash.dataFetching = $null
+                            }
     
-try { $Form = [Windows.Markup.XamlReader]::Load( $reader ) }
-catch [System.Management.Automation.MethodInvocationException] {
-    Write-Warning "We ran into a problem with the XAML code.  Check the syntax for this control..."
-    Write-Host $error[0].Exception.Message -ForegroundColor Red
-    if ($error[0].Exception.Message -like "*button*") {
-        Write-Warning "Ensure your &lt;button in the `$inputXML does NOT have a Click=ButtonClick property.  PS can't handle this`n`n`n`n"
-    }
-}
-catch {
-    #if it broke some other way <span class="wp-smiley wp-emoji wp-emoji-bigsmile" title=":D">:D</span>
-    Write-Host "Unable to load Windows.Markup.XamlReader. Double-check syntax and ensure .net is installed."
-}
-  
-#===========================================================================
-# Store Form Objects In PowerShell
-#===========================================================================
-  
-$xaml.SelectNodes("//*[@Name]") | ForEach-Object { Set-Variable -Name "WPF$($_.Name)" -Value $Form.FindName($_.Name) }
-  
-Function Get-FormVariables {
-    if ($global:ReadmeDisplay -ne $true) {
-        Write-host "If you need to reference this display again, run Get-FormVariables" -ForegroundColor Yellow; $global:ReadmeDisplay = $true
-    }
+                            $PSInstance = [powershell]::Create().AddScript($code)
+                            $PSinstance.Runspace = $datarunspace
+                            $dataJob = $PSinstance.BeginInvoke()
     
-    Write-Host "Found the following interactable elements from our form" -ForegroundColor Cyan
-    Get-Variable WPF*
-}
+                        } else {
+                            return $dataJob.isCompleted
+                        }
 
-Get-FormVariables
+                    }
 
-Write-Host "To show the form, run the following" -ForegroundColor Cyan
+                    Do {
+                        LoadProgress "fetching data"  
+                    } while (FetchData)
+                    
+                    LoadGrid
+                    StartButtonEnable
 
-function Write-FormHost {
-    param( [string]$Text )
+                }
+        
+                $PSInstance = [powershell]::Create().AddScript($code)
+                $PSinstance.Runspace = $btnrunspace
+                $job = $PSinstance.BeginInvoke()
 
-    $Form.Dispatcher.Invoke(
-        [action] { $WPFStatusTextBlock.Text = $Text }, "Render"
-    )
-}
+            });
 
-function Save-Settings {
-    [System.Environment]::SetEnvironmentVariable('SDD_REMOTEAPP', $WPFMRACheckBox.IsChecked , [System.EnvironmentVariableTarget]::User)
-    Write-FormHost "setings saved"
-}
+        Get-Settings
+        #Write-FormHostError "failed to load settings"
 
-function Get-Settings {
-    Write-FormHost "settings loaded"
-    if ($env:SDD_REMOTEAPP -eq $true) {
-        $WPFMRACheckBox.IsChecked = $true
-    }
-    else {
-        $WPFMRACheckBox.IsChecked = $false   
-    }
-}
+        # Finalize and close gui runspace upon exit
+        $syncHash.Form.ShowDialog() | Out-Null
+        $syncHash.Error = $Error
+        $Runspace.Close()
+        $Runspace.Dispose()
+    });
 
-function Get-Status {
-    Write-FormHost "portal login"
-    Start-Sleep 10
-    $WPFProgressBar.Value = 20
-    Write-FormHost "fetching user VMs"
-    Start-Sleep 10
-    $WPFProgressBar.Value = 40
-    Write-FormHost "converting forms"
-    Start-Sleep 10
-    $WPFProgressBar.Value = 60
-    Write-FormHost "calculating best VM"
-    $WPFProgressBar.Value = 100
-    $WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name1'; IP = '10.2.1.1'; State = 'OK'; Expiration = '14 days' })
-    $WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name2'; IP = '10.2.1.2'; State = 'NOK'; Expiration = '5 days' })
-    $WPFStartButton.IsEnabled = $true
-}
-
-$WPFStartButton.Add_Click( { $WPFStartButton.IsEnabled = $False ; Get-Status })
-$WPFMRACheckBox.Add_Click( { Save-Settings })
-
-Get-Settings  
-
-$Form.ShowDialog() | Out-Null
-
+# Load runspace with gui
+$psCmd.Runspace = $newRunspace
+$data = $psCmd.BeginInvoke()
