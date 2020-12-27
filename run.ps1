@@ -6,8 +6,36 @@ $newRunspace.ThreadOptions = "ReuseThread"
 $newRunspace.Open()
 $newRunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)      
 
+$syncHash.globalFunctions = @'
+
+function Write-StatusProgress ($msg, $pct) {
+
+    $syncHash.Form.Dispatcher.Invoke([action] {
+        $syncHash.WPFStatusTextBlock.Text = $msg
+        if (-not [string]::IsNullOrEmpty($pct)) {
+            $syncHash.WPFProgressBar.Value = $pct
+        }
+            }, "Render"
+    )
+}
+
+function Write-Error ($msg = 'error') {
+
+    $syncHash.Form.Dispatcher.Invoke([action] {
+        $syncHash.WPFStatusTextBlock.Text = $msg
+        $syncHash.WPFStatusTextBlock.Foreground = 'Red'
+        $syncHash.WPFProgressBar.Foreground = 'Red'
+            }, "Render"
+    )
+}
+
+'@
+
 # Build UI and add to RunSpace
 $psCmd = [PowerShell]::Create().AddScript( {
+        # Loading global shared functions
+        Invoke-Expression $syncHash.globalFunctions
+
         $inputXML = @"
 <Window x:Class="WpfApp2.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -29,7 +57,7 @@ $psCmd = [PowerShell]::Create().AddScript( {
         <ProgressBar Name="ProgressBar" HorizontalAlignment="Left" Height="10" Margin="100,15,0,0" VerticalAlignment="Top" Width="295"/>
         <Label Content="Status:" HorizontalAlignment="Left" Margin="10,190,0,-52.5" VerticalAlignment="Top" Width="46" Height="26" FontWeight="Bold"/>
         <Label Content="User VMs" HorizontalAlignment="Left" Margin="10,64,0,0" VerticalAlignment="Top" FontWeight="Bold"/>
-        <TextBlock Name="StatusTextBlock" HorizontalAlignment="Left" Margin="61,195,0,-57.5" TextWrapping="Wrap" Text="loading..." VerticalAlignment="Top" Width="270" Height="26"/>
+        <TextBlock Name="StatusTextBlock" HorizontalAlignment="Left" Margin="61,195,0,-57.5" TextWrapping="Wrap" Text="loading..." VerticalAlignment="Top" Width="330" Height="26"/>
         <DataGrid Name="DataGrid" Height="90" HorizontalAlignment="Left" Margin="12,95,0,0" Width="380" HorizontalGridLinesBrush="Gray" VerticalGridLinesBrush="Gray" VerticalAlignment="Top">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="Auto" IsReadOnly="True">
@@ -74,7 +102,6 @@ $psCmd = [PowerShell]::Create().AddScript( {
             $syncHash.Form.Dispatcher.Invoke(
                 [action] { $syncHash.WPFStatusTextBlock.Text = $Text }, "Render"
             )
-            Start-Sleep -Milliseconds 500
         }
 
         function Write-FormHostError {
@@ -82,15 +109,14 @@ $psCmd = [PowerShell]::Create().AddScript( {
 
             $syncHash.Form.Dispatcher.Invoke([action] { 
                 $syncHash.WPFStatusTextBlock.Text = $Text 
-                $syncHash.WPFStatusTextBlock.Foreground = 'red'
+                $syncHash.WPFStatusTextBlock.Foreground = 'Red'
+                $syncHash.WPFProgressBar.Foreground = 'Red'
                 }, "Render"
             )
-            Start-Sleep -Milliseconds 500
         }
 
-
         function Get-Settings {
-            Write-FormHost "settings loaded"
+            Write-StatusProgress "settings loaded extra long message for testing field lenght" 
             if ($env:SDD_REMOTEAPP -eq $true) {
                 $syncHash.WPFMRACheckBox.IsChecked = $true
             }
@@ -98,23 +124,6 @@ $psCmd = [PowerShell]::Create().AddScript( {
                 $syncHash.WPFMRACheckBox.IsChecked = $false   
             }
         }
-
-        # function Get-Status {
-        #     Write-FormHost "portal login"
-        #     Start-Sleep 10
-        #     $syncHash.WPFProgressBar.Value = 20
-        #     Write-FormHost "fetching user VMs"
-        #     Start-Sleep 10
-        #     $syncHash.WPFProgressBar.Value = 40
-        #     Write-FormHost "converting forms"
-        #     Start-Sleep -Milliseconds 500
-        #     $syncHash.WPFProgressBar.Value = 60
-        #     Write-FormHost "calculating best VM"
-        #     $syncHash.WPFProgressBar.Value = 100
-        #     $syncHash.WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name1'; IP = '10.2.1.1'; State = 'OK'; Expiration = '14 days' })
-        #     $syncHash.WPFDatagrid.AddChild([pscustomobject]@{Name = 'vm-name2'; IP = '10.2.1.2'; State = 'NOK'; Expiration = '5 days' })
-        #     $syncHash.WPFStartButton.IsEnabled = $true
-        # }
 
         $syncHash.WPFMRACheckBox.Add_Click( { 
        
@@ -125,13 +134,14 @@ $psCmd = [PowerShell]::Create().AddScript( {
                 $saverunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)
         
                 $syncHash.mode = $syncHash.WPFMRACheckBox.IsChecked
+                $syncHash.f = $syncHash.globalFunctions
 
                 $code = {
+                    Invoke-Expression $syncHash.f
+                    
                     [System.Environment]::SetEnvironmentVariable('SDD_REMOTEAPP', $syncHash.mode , [System.EnvironmentVariableTarget]::User)
-            
-                    $syncHash.Form.Dispatcher.Invoke(
-                        [action] { $syncHash.WPFStatusTextBlock.Text = "mode:$($syncHash.WPFMRACheckBox.IsChecked):state:$($syncHash.mode)" }, "Render"
-                    )       
+
+                    Write-StatusProgress "setings saved"
                 }
 
                 $PSInstance = [powershell]::Create().AddScript($code)
@@ -149,17 +159,11 @@ $psCmd = [PowerShell]::Create().AddScript( {
                 $btnrunspace.Open()
                 $btnrunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)
 
-                $syncHash.mode = $syncHash.WPFMRACheckBox.IsChecked
+                $syncHash.remoteAppMode = $syncHash.WPFMRACheckBox.IsChecked
+                $syncHash.f = $syncHash.globalFunctions
               
                 $code = {
-                    function Write-FormStatus ($msg, $indicator) {
-                        $syncHash.Form.Dispatcher.Invoke(
-                            [action] {
-                                $syncHash.WPFStatusTextBlock.Text = $msg 
-                                $syncHash.WPFProgressBar.Value = $indicator
-                            }, "Render"
-                        )
-                    }
+                    Invoke-Expression $syncHash.f
                     function StartButtonEnable {
                         $syncHash.Form.Dispatcher.Invoke(
                             [action] { $syncHash.WPFStartButton.IsEnabled = $true })
@@ -167,12 +171,12 @@ $psCmd = [PowerShell]::Create().AddScript( {
       
                     function LoadProgress ($msg = "loading"){
                         For ($i = 0; $i -le 10; $i++) {
-                            Write-FormStatus "$($msg) ." $i
-                            Start-Sleep -Milliseconds 200
-                            Write-FormStatus "$($msg) .."
-                            Start-Sleep -Milliseconds 200
-                            Write-FormStatus "$($msg) ..."
-                            Start-Sleep -Milliseconds 200
+                            Write-StatusProgress "$($msg) ." $i
+                            Start-Sleep -Milliseconds 100
+                            Write-StatusProgress "$($msg) .."
+                            Start-Sleep -Milliseconds 100
+                            Write-StatusProgress "$($msg) ..."
+                            Start-Sleep -Milliseconds 100
                         }
                     }
 
@@ -192,6 +196,7 @@ $psCmd = [PowerShell]::Create().AddScript( {
                         if (-not $syncHash.dataFetching){
                             
                             $syncHash.dataFetching = $true
+                            $syncHash.dataLoadError = $null
                             
                             $datarunspace = [runspacefactory]::CreateRunspace()
                             $datarunspace.ApartmentState = "STA"
@@ -199,9 +204,15 @@ $psCmd = [PowerShell]::Create().AddScript( {
                             $datarunspace.Open()
                             $datarunspace.SessionStateProxy.SetVariable("syncHash", $syncHash)
                             
+                            $syncHash.f = $syncHash.globalFunctions
+
                             $code = {
-                                Start-Sleep 10
-                                $syncHash.dataFetching = $null
+
+                                Invoke-Expression $syncHash.f
+                                "running fetch `n" | Out-File -FilePath out.log -Append -Force
+                                Start-Sleep 5
+                                $syncHash.dataFetching = $null                               
+                                $syncHash.dataLoadError = $false
                             }
     
                             $PSInstance = [powershell]::Create().AddScript($code)
@@ -214,10 +225,18 @@ $psCmd = [PowerShell]::Create().AddScript( {
 
                     }
 
-                    Do {
-                        LoadProgress "fetching data"  
-                    } while (FetchData)
+                    #Do {
+                    #    LoadProgress "fetching data"  
+                    #} while (FetchData) 
                     
+                    FetchData
+
+                    Do {
+                        LoadProgress "fetching data"
+                    } while ([string]::IsNullOrEmpty($syncHash.dataLoadError))
+
+                    if ($syncHash.dataLoadError) { Write-Error "failed to load data"} else { Write-StatusProgress "data loaded"}
+
                     LoadGrid
                     StartButtonEnable
 
@@ -226,6 +245,9 @@ $psCmd = [PowerShell]::Create().AddScript( {
                 $PSInstance = [powershell]::Create().AddScript($code)
                 $PSinstance.Runspace = $btnrunspace
                 $job = $PSinstance.BeginInvoke()
+
+                $Runspace.Close()
+                $Runspace.Dispose()
 
             });
 
