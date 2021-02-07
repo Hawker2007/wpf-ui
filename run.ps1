@@ -31,7 +31,86 @@ $sharedFunctions = {
             }, "Render"
         )
     }
-    
+
+    function Write-Toast {
+    Add-Type -AssemblyName System.Windows.Forms
+#[System.Windows.Forms.Application]::EnableVisualStyles()
+# Load WPF assembly if necessary
+[void][System.Reflection.Assembly]::LoadWithPartialName('presentationframework')
+
+[xml]$xaml = @"
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Name="Window" Height="120" Width="400" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" AllowsTransparency="True" Background="Black" Foreground="White" Opacity="0.7" BorderBrush="Red" WindowStyle="None">
+    <Grid Margin="0,0,0.5,0">
+        <Button Name = "CloseButton" Content="X" HorizontalAlignment="Left" Margin="370,0,-0.5,0" VerticalAlignment="Top" Width="30" Height="32" Background="#FF010101" Foreground="White" BorderBrush="{x:Null}">
+        <Button.Style>
+    <Style TargetType="{x:Type Button}">
+        <Setter Property="Background" Value="Black" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="Border" Background="{TemplateBinding Background}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="Red" TargetName="Border" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</Button.Style>
+        </Button>
+        <Label Name="Title" Content="Application name" HorizontalAlignment="Left" Margin="28,10,0,0" VerticalAlignment="Top" Width="332" Height="40" Foreground="White" FontSize="20"/>
+        <Label Name="Text" Content="INFO: all seems good" HorizontalAlignment="Left" Margin="28,50,0,10" VerticalAlignment="Top" Width="362" Height="60" Foreground="White" FontSize="15"/>
+    </Grid>
+</Window>
+"@
+
+$reader=(New-Object System.Xml.XmlNodeReader $xaml)
+$Window=[Windows.Markup.XamlReader]::Load( $reader )
+
+$Window.Left = $([System.Windows.SystemParameters]::WorkArea.Width-$Window.Width-5) 
+$Window.Top = $([System.Windows.SystemParameters]::WorkArea.Height-$Window.Height-5) 
+
+$Title = $Window.FindName("Title")
+$Text = $Window.FindName("Text")
+$Button = $Window.FindName("CloseButton")
+
+$Title.Content = "App"
+$Text.Foreground = "White"
+$Text.Content = "Sample info`n" + (get-date -Format T)
+
+$delay = 5
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 1000
+
+#$timer.Add_Tick({
+#        $Window.Activate()
+#        $timer.Stop()
+#        Start-Sleep -Seconds $delay
+#        $Window.Close()
+#        $timer.Dispose()
+#})
+
+$Button.Add_Click({
+    $timer.Stop()
+    $Window.Hide()
+    $Window.Close()
+    $timer.Dispose()
+})
+
+$timer.start()
+
+$Window.ShowDialog()
+
+    }
+
 }
 
 $syncHash.globalFunctions = "$sharedFunctions"
